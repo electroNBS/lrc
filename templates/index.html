@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raspberry Pi Camera Capture</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #image-container img { max-width: 200px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Capture Images from Raspberry Pi Camera</h1>
+    <button id="capture-btn">Capture Image</button>
+    <div id="image-container"></div>
+    <button id="process-btn">Process Images</button>
+    <a id="download-link" style="display: none;" href="#" download>Download SVG</a>
+    <button id="convert-to-dxf-btn">Convert to DXF</button>
+    <a id="download-dxf-link" style="display: none;" href="#" download>Download DXF</a>
+
+    <script>
+        document.getElementById("capture-btn").addEventListener("click", async () => {
+            const response = await fetch("/capture", { method: "POST" });
+            const data = await response.json();
+            if (response.ok) {
+                const img = document.createElement("img");
+                img.src = data.image_url;
+                document.getElementById("image-container").appendChild(img);
+            } else {
+                alert(data.error);
+            }
+        });
+
+        document.getElementById("process-btn").addEventListener("click", async () => {
+            const response = await fetch("/process", { method: "POST" });
+            const data = await response.json();
+            if (response.ok) {
+                document.getElementById("download-link").href = data.svg_url;
+                document.getElementById("download-link").style.display = "block";
+            } else {
+                alert(data.error);
+            }
+        });
+
+        document.getElementById("convert-to-dxf-btn").addEventListener("click", async () => {
+        const response = await fetch("/convert_to_dxf", { method: "POST" });
+        const data = await response.json();
+        if (response.ok) {
+            document.getElementById("download-dxf-link").href = data.dxf_url;
+            document.getElementById("download-dxf-link").style.display = "block";
+        } else {
+            alert(data.error);
+        }
+    });
+    </script>
+</body>
+</html>

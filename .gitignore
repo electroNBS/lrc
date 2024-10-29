@@ -1,0 +1,7 @@
+bin/
+images/
+include/
+lib/
+Scripts/
+share/
+pyvenv.cfg
