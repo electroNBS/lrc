@@ -26,4 +26,5 @@ document.getElementById("previewBtn").addEventListener("click", () => {
 
 document.getElementById("exportBtn").addEventListener("click", () => {
   window.location.href = "/export";
+
 });

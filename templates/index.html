@@ -15,6 +15,13 @@
     <div id="image-container"></div>
     <button id="process-btn">Process Images</button>
     <a id="download-link" style="display: none;" href="#" download>Download SVG</a>
+    <div>
+        <label for="offset">Offset (px): </label>
+        <input type="number" id="offset" min="0" value="10">
+        <label for="tolerance">Tolerance (px): </label>
+        <input type="number" id="tolerance" min="1" value="5">
+        <button id="apply-offset-btn">Apply Offset & Tolerance</button>
+    </div>
     <button id="convert-to-dxf-btn">Convert to DXF</button>
     <a id="download-dxf-link" style="display: none;" href="#" download>Download DXF</a>
 

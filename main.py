@@ -3,7 +3,6 @@ import os
 import cv2
 import numpy as np
 from picamzero import Camera
-import time
 import svgwrite
 import ezdxf
 from xml.dom import minidom
@@ -11,38 +10,61 @@ app = Flask(__name__)
 IMAGE_FOLDER = "./static/images"
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
-captured_images = []  # List to store filenames of captured images
+count = 1
 
+def capture_image(n):
+     os.system("rpicam-still -e png -o image"+str(n)+".png")
+     count+=1
 def capture_image():
-        camera = Camera()
-        camera.start_preview()
-        time.sleep(2)  # Allow camera to adjust settings
-        filename = f"{IMAGE_FOLDER}/image_{len(captured_images)}.png"
-        camera.take_photo(filename)
-        return filename
+    return 
 
 def process_images():
-    if not captured_images:
-        raise ValueError("No images to process.")
-
-    combined_image = None
-
+    n = int(np.ceil(np.sqrt(count)))
     # Combine all captured images into one PNG
-    for image_file in captured_images:
-        img = cv2.imread(image_file)
-        if combined_image is None:
-            combined_image = img
-        else:
-            combined_image = np.vstack((combined_image, img))
-
     # Save the combined image
-    combined_image_path = f"{IMAGE_FOLDER}/combined_image.png"
-    cv2.imwrite(combined_image_path, combined_image)
+    os.system(f"montage {IMAGE_FOLDER}/*.png -tile "+str(n)+"x"+str(n)+" image.png")
 
-    # Extract contours
-    gray = cv2.cvtColor(combined_image, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+   # Load the combined montage image
+    combined_image_path = "image.png"
+    img = cv2.imread(combined_image_path)
+
+    # Convert to grayscale
+    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Apply a binary threshold to get a binary image
+    _, binary_img = cv2.threshold(gray_img, 128, 255, cv2.THRESH_BINARY)
+
+    # Find initial contours
+    contours, _ = cv2.findContours(binary_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Process tolerance using dilation and erosion
+    tolerance = 5  # Example tolerance value for contour thickness
+    kernel = np.ones((tolerance, tolerance), np.uint8)
+    dilated_img = cv2.dilate(binary_img, kernel, iterations=1)
+    eroded_img = cv2.erode(dilated_img, kernel, iterations=1)
+
+    # Re-find contours on the tolerance-processed image
+    contours, _ = cv2.findContours(eroded_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Apply offset to each contour
+    offset = 10  # Example offset value (in pixels)
+    offset_contours = []
+    for contour in contours:
+    # Offset each point in the contour
+        offset_contour = np.array([[[point[0][0] + offset, point[0][1] + offset]] for point in contour])
+        offset_contours.append(offset_contour)
+
+# Draw offset contours on a blank image for preview
+    contour_img = np.zeros_like(gray_img)
+    cv2.drawContours(contour_img, offset_contours, -1, (255), thickness=cv2.FILLED)
+
+# Save or display the final image with contours
+    cv2.imwrite("contours_with_offset.png", contour_img)
+
+# Show the image with contours for preview (optional)
+    cv2.imshow("Contours with Offset", contour_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
     # Create an SVG file with contours and a rectangle
     svg_file_path = f"{IMAGE_FOLDER}/output.svg"
@@ -97,9 +119,8 @@ def index():
 @app.route("/capture", methods=["POST"])
 def capture():
     try:
-        filename = capture_image()
-        captured_images.append(filename)
-        return jsonify({"image_url": f"/{filename}"})
+        #capture_image(count)
+        capture_image()
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
