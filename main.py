@@ -363,9 +363,10 @@ def convert_to_dxf():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/SVGnest")
+@app.route('/index2')
 def index2():
-    return render_template("index2.html")
+    # Render the SVGnest index page as a template
+    return render_template('svgnest_index.html')
 
 
 if __name__ == "__main__":
