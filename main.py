@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for
 import os
 import cv2
 import numpy as np
@@ -24,6 +24,95 @@ count = 2
 #      count+=1
 def capture_image():
     return 1
+
+
+# def process_images():
+#     # Get offset and tolerance from the request
+#     data = request.get_json()
+#     if data is None:
+#         return jsonify({"error": "Expected JSON data"}), 400
+#     offset = int(data.get("offset", 10))  # Default to 10 if not provided
+#     tolerance = int(data.get("tolerance", 5))  # Default to 5 if not provided
+
+#     # Retrieve and sort the image files
+#     image_files = sorted([f for f in os.listdir(IMAGE_FOLDER) if f.startswith("image") and f.endswith(".png")])
+#     count = len(image_files)
+#     n = int(np.ceil(np.sqrt(count)))  # Number of images per row/column in the grid
+
+#     # Determine canvas size based on maximum image dimensions
+#     max_width = max(cv2.imread(f"{IMAGE_FOLDER}/{f}").shape[1] for f in image_files)
+#     max_height = max(cv2.imread(f"{IMAGE_FOLDER}/{f}").shape[0] for f in image_files)
+
+#     # Create a white canvas to hold all images
+#     canvas_width = max_width * n
+#     canvas_height = max_height * n
+#     canvas = np.ones((canvas_height, canvas_width), dtype=np.uint8) * 255  # Initialize with white background
+
+#     # Process each image and place it on the canvas
+#     for idx, image_file in enumerate(image_files):
+#         img = cv2.imread(f"{IMAGE_FOLDER}/{image_file}")
+
+#         # Ensure the image is in grayscale
+#         if len(img.shape) == 3:  # Check if the image has 3 channels (i.e., is in color)
+#             gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+#         else:
+#             gray_img = img  # Image is already grayscale
+
+#         # Threshold to binary
+#         _, binary_img = cv2.threshold(gray_img, 10, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
+#         # Process tolerance using dilation and erosion
+#         kernel = np.ones((tolerance, tolerance), np.uint8)
+#         dilated_img = cv2.dilate(binary_img, kernel, iterations=1)
+#         eroded_img = cv2.erode(dilated_img, kernel, iterations=1)
+
+#         # Find contours after tolerance adjustments
+#         edges = cv2.Canny(eroded_img, 50, 150)
+#         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+#         # Simplify contours to reduce pixelation and ensure solid paths
+#         simplified_contours = []
+#         for contour in contours:
+#             epsilon = 0.01 * cv2.arcLength(contour, True)  # Adjust factor for smoothness
+#             simplified_contour = cv2.approxPolyDP(contour, epsilon, True)
+#             simplified_contours.append(simplified_contour)
+
+#         # Calculate position on canvas
+#         row, col = divmod(idx, n)
+#         y_start, x_start = row * max_height, col * max_width
+
+#         # Draw simplified contours on the canvas
+#         contour_img = np.ones_like(gray_img) * 255  # White background
+#         cv2.drawContours(contour_img, simplified_contours, -1, (0, 0, 0), 1)
+#         canvas[y_start:y_start + contour_img.shape[0], x_start:x_start + contour_img.shape[1]] = contour_img
+
+#     # Save the combined image
+#     combined_image_path = f"{IMAGE_FOLDER}/combined_image.png"
+#     cv2.imwrite(combined_image_path, canvas)
+
+#     # Detect simplified contours in the combined image for SVG output
+#     gray_combined = canvas if len(canvas.shape) == 2 else cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY)
+#     _, binary_combined = cv2.threshold(gray_combined, 10, 255, cv2.THRESH_BINARY)
+#     combined_contours, _ = cv2.findContours(binary_combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+#     # Create SVG and save the simplified contours
+#     svg_file_path = f"{IMAGE_FOLDER}/output.svg"
+#     dwg = svgwrite.Drawing(svg_file_path, profile="tiny", size=(canvas_width, canvas_height))
+
+#     # Debug step: check if combined_contours were found
+#     if not combined_contours:
+#         print("No contours detected in the combined image. Check input images and processing steps.")
+#         return jsonify({"error": "No contours detected in the combined image"}), 400
+
+#     for contour in combined_contours:
+#         # Apply offset to each point in the contour
+#         contour_with_offset = [(point[0][0] + offset, point[0][1] + offset) for point in contour]
+#         path_data = "M " + " L ".join([f"{x},{y}" for x, y in contour_with_offset]) + " Z"
+#         dwg.add(dwg.path(d=path_data, fill="none", stroke="black", stroke_width=1))
+
+#     dwg.save()
+
+#     return svg_file_path, combined_image_path
 
 
 def process_images():
@@ -71,17 +160,27 @@ def process_images():
         dilated_img = cv2.dilate(binary_img, kernel, iterations=1)
         eroded_img = cv2.erode(dilated_img, kernel, iterations=1)
 
+        # Apply Gaussian blur to make edges smoother and more connected
+        blurred_img = cv2.GaussianBlur(eroded_img, (1, 1), 0)
+
         # Find contours after tolerance adjustments
-        edges = cv2.Canny(eroded_img, 50, 150)
+        edges = cv2.Canny(blurred_img, 50, 150)
         contours, _ = cv2.findContours(
             edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
 
+        simplified_contours = []
+        for contour in contours:
+            epsilon = 0.00000000000000000000001 * cv2.arcLength(
+                contour, True
+            )  # Tuning this factor can control smoothness
+            simplified_contour = cv2.approxPolyDP(contour, epsilon, True)
+            simplified_contours.append(simplified_contour)
+
         # Create a white background for the contour image
         contour_img = np.ones_like(gray_img) * 255  # White background
-
         # Draw contours in black
-        cv2.drawContours(contour_img, contours, -1, (0, 0, 0), 1)
+        cv2.drawContours(contour_img, simplified_contours, -1, (0, 0, 0), 1)
 
         # Calculate position on canvas
         row, col = divmod(idx, n)
@@ -134,6 +233,7 @@ def create_svg_with_contours(svg_file_path, contours, offset, width, height):
             stroke_width=2,
         )
     )
+
     # Offset for contours based on rectangle size
     offset_y = (
         rect_height + 10
@@ -150,6 +250,7 @@ def create_svg_with_contours(svg_file_path, contours, offset, width, height):
         dwg.add(dwg.path(d=path_data, fill="none", stroke="black", stroke_width=1))
 
     dwg.save()
+    return redirect("./templates/index2.html")
 
 
 def convert_svg_to_dxf(svg_file_path, dxf_file_path):
@@ -260,6 +361,11 @@ def convert_to_dxf():
         return send_file(dxf_file_path, as_attachment=True)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/index2.html")
+def index2():
+    return render_template("index2.html")
 
 
 if __name__ == "__main__":
