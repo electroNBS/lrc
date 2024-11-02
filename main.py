@@ -12,9 +12,11 @@ app = Flask(__name__)
 IMAGE_FOLDER = "./static/images"
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
-count = 31
+# UNCOMMENT BEFORE USING WITH RASPI AND COMMENT THE NEXT LINE
+# count = 1
+count = 6
 
-
+# UNCOMMENT BEFORE USING WITH RASPI AND COMMENT THE NEXT LINE
 # def capture_image(n):
 #      os.system("rpicam-still -e png -o image"+str(n)+".png")
 #      count+=1
@@ -22,18 +24,8 @@ def capture_image():
     return 1
 
 
-def process_images():
-    n = int(np.ceil(np.sqrt(count)))
-    # Combine all captured images into one PNG
-    # Save the combined image
-    os.system(
-        f"magick montage {IMAGE_FOLDER}/*.png -tile "
-        + str(n)
-        + "x"
-        + str(n)
-        + " image.png"
-    )
 
+def process_images():
     # Get offset and tolerance from the request
     data = request.get_json()
     if data is None:
@@ -41,58 +33,76 @@ def process_images():
     offset = int(data.get("offset", 10))  # Default to 10 if not provided
     tolerance = int(data.get("tolerance", 5))  # Default to 5 if not provided
 
-    # Load the combined montage image
-    combined_image_path = "image.png"
-    img = cv2.imread(combined_image_path)
+    # Retrieve and sort the image files
+    image_files = sorted([f for f in os.listdir(IMAGE_FOLDER) if f.startswith("image") and f.endswith(".png")])
+    count = len(image_files)
+    n = int(np.ceil(np.sqrt(count)))  # Number of images per row/column in the grid
 
-    # Convert to grayscale and threshold to binary
-    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, binary_img = cv2.threshold(gray_img, 128, 255, cv2.THRESH_BINARY)
+    # Determine canvas size based on maximum image dimensions
+    max_width = max(cv2.imread(f"{IMAGE_FOLDER}/{f}").shape[1] for f in image_files)
+    max_height = max(cv2.imread(f"{IMAGE_FOLDER}/{f}").shape[0] for f in image_files)
 
-    # Process tolerance using dilation and erosion
-    kernel = np.ones((tolerance, tolerance), np.uint8)
-    dilated_img = cv2.dilate(binary_img, kernel, iterations=1)
-    eroded_img = cv2.erode(dilated_img, kernel, iterations=1)
+    # Create a white canvas to hold all images
+    canvas_width = max_width * n
+    canvas_height = max_height * n
+    canvas = np.ones((canvas_height, canvas_width), dtype=np.uint8) * 255  # Initialize with white background
 
-    # Re-find contours after tolerance adjustments
-    contours, _ = cv2.findContours(
-        eroded_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    # Process each image and place it on the canvas
+    for idx, image_file in enumerate(image_files):
+        img = cv2.imread(f"{IMAGE_FOLDER}/{image_file}")
+        
+        # Convert to grayscale and threshold to binary
+        gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        _, binary_img = cv2.threshold(gray_img, 10, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        
+        # Process tolerance using dilation and erosion
+        kernel = np.ones((tolerance, tolerance), np.uint8)
+        dilated_img = cv2.dilate(binary_img, kernel, iterations=1)
+        eroded_img = cv2.erode(dilated_img, kernel, iterations=1)
+        
+        # Find contours after tolerance adjustments
+        edges = cv2.Canny(eroded_img, 50, 150)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Create a white background for the contour image
+        contour_img = np.ones_like(gray_img) * 255  # White background
+        
+        # Draw contours in black
+        cv2.drawContours(contour_img, contours, -1, (0, 0, 0), 1)
+
+        # Calculate position on canvas
+        row, col = divmod(idx, n)
+        y_start, x_start = row * max_height, col * max_width
+        
+        # Place the processed image on the canvas
+        canvas[y_start:y_start + contour_img.shape[0], x_start:x_start + contour_img.shape[1]] = contour_img
+
+    # Save the combined image
+    combined_image_path = f"{IMAGE_FOLDER}/combined_image.png"
+    cv2.imwrite(combined_image_path, canvas)
+
+    # Extract contours from the combined image if needed
+    _, combined_binary_img = cv2.threshold(
+        canvas, 10, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU
     )
+    final_contours, _ = cv2.findContours(combined_binary_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Apply offset to each contour
-    offset_contours = []
-    for contour in contours:
-        # Shift each point by the offset amount
-        offset_contour = np.array(
-            [[[point[0][0] + offset, point[0][1] + offset]] for point in contour]
-        )
-        offset_contours.append(offset_contour)
-
-    # Draw offset contours on a blank image for preview
-    contour_img = np.zeros_like(gray_img)
-    cv2.drawContours(contour_img, offset_contours, -1, (255), thickness=cv2.FILLED)
-
-    # Save the image with contours
-    processed_image_path = "./static/images/contours_with_offset.png"
-    cv2.imwrite(processed_image_path, contour_img)
-    # Create an SVG file with contours and a rectangle
+    # Create SVG with final contours and offset rectangle
     svg_file_path = f"{IMAGE_FOLDER}/output.svg"
-    # create_svg_with_contours(svg_file_path, contours)
+    create_svg_with_contours(svg_file_path, final_contours, offset)
 
-    return svg_file_path, processed_image_path
+    return svg_file_path, combined_image_path
 
-
-def create_svg_with_contours(svg_file_path, contours, rect_size=(50, 50)):
-    dwg = svgwrite.Drawing(svg_file_path, profile="tiny", size=(640, 480))
-
-    # Create a rectangle at the top-left corner
-    dwg.add(dwg.rect(insert=(0, 0), size=rect_size, fill="none", stroke="black"))
-
-    # Add contours to SVG
+def create_svg_with_contours(svg_file_path, contours, offset):
+    dwg = svgwrite.Drawing(svg_file_path, profile='tiny')
     for contour in contours:
-        points = [(pt[0][0], pt[0][1]) for pt in contour]
-        dwg.add(dwg.polygon(points, fill="none", stroke="black"))
-
+        path_data = [
+            ("M", (point[0][0] + offset, point[0][1] + offset)) if i == 0 else ("L", (point[0][0] + offset, point[0][1] + offset))
+            for i, point in enumerate(contour)
+        ]
+        path = dwg.path(d=path_data, fill="none", stroke="black", stroke_width=0.5)
+        dwg.add(path)
+    
     dwg.save()
 
 
@@ -134,6 +144,7 @@ def index():
 @app.route("/capture", methods=["POST"])
 def capture():
     try:
+        # UNCOMMENT BEFORE USING WITH RASPI AND COMMENT THE NEXT LINE
         # capture_image(count)
         capture_image()
     except Exception as e:
@@ -144,9 +155,7 @@ def capture():
 def process():
     try:
         svg_file_path, processed_image_path = process_images()
-        return jsonify(
-            {"svg_url": svg_file_path, "image_url":processed_image_path}
-        )
+        return jsonify({"svg_url": svg_file_path, "image_url": processed_image_path})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
