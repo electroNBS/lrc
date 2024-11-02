@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 import os
 import cv2
 import numpy as np
+import re
 
 # from picamzero import Camera
 import svgwrite
@@ -14,7 +15,8 @@ os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
 # UNCOMMENT BEFORE USING WITH RASPI AND COMMENT THE NEXT LINE
 # count = 1
-count = 6
+count = 2
+
 
 # UNCOMMENT BEFORE USING WITH RASPI AND COMMENT THE NEXT LINE
 # def capture_image(n):
@@ -22,7 +24,6 @@ count = 6
 #      count+=1
 def capture_image():
     return 1
-
 
 
 def process_images():
@@ -34,7 +35,13 @@ def process_images():
     tolerance = int(data.get("tolerance", 5))  # Default to 5 if not provided
 
     # Retrieve and sort the image files
-    image_files = sorted([f for f in os.listdir(IMAGE_FOLDER) if f.startswith("image") and f.endswith(".png")])
+    image_files = sorted(
+        [
+            f
+            for f in os.listdir(IMAGE_FOLDER)
+            if f.startswith("image") and f.endswith(".png")
+        ]
+    )
     count = len(image_files)
     n = int(np.ceil(np.sqrt(count)))  # Number of images per row/column in the grid
 
@@ -45,37 +52,46 @@ def process_images():
     # Create a white canvas to hold all images
     canvas_width = max_width * n
     canvas_height = max_height * n
-    canvas = np.ones((canvas_height, canvas_width), dtype=np.uint8) * 255  # Initialize with white background
+    canvas = (
+        np.ones((canvas_height, canvas_width), dtype=np.uint8) * 255
+    )  # Initialize with white background
 
     # Process each image and place it on the canvas
     for idx, image_file in enumerate(image_files):
         img = cv2.imread(f"{IMAGE_FOLDER}/{image_file}")
-        
+
         # Convert to grayscale and threshold to binary
         gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        _, binary_img = cv2.threshold(gray_img, 10, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-        
+        _, binary_img = cv2.threshold(
+            gray_img, 10, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU
+        )
+
         # Process tolerance using dilation and erosion
         kernel = np.ones((tolerance, tolerance), np.uint8)
         dilated_img = cv2.dilate(binary_img, kernel, iterations=1)
         eroded_img = cv2.erode(dilated_img, kernel, iterations=1)
-        
+
         # Find contours after tolerance adjustments
         edges = cv2.Canny(eroded_img, 50, 150)
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
+        contours, _ = cv2.findContours(
+            edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
         # Create a white background for the contour image
         contour_img = np.ones_like(gray_img) * 255  # White background
-        
+
         # Draw contours in black
         cv2.drawContours(contour_img, contours, -1, (0, 0, 0), 1)
 
         # Calculate position on canvas
         row, col = divmod(idx, n)
         y_start, x_start = row * max_height, col * max_width
-        
+
         # Place the processed image on the canvas
-        canvas[y_start:y_start + contour_img.shape[0], x_start:x_start + contour_img.shape[1]] = contour_img
+        canvas[
+            y_start : y_start + contour_img.shape[0],
+            x_start : x_start + contour_img.shape[1],
+        ] = contour_img
 
     # Save the combined image
     combined_image_path = f"{IMAGE_FOLDER}/combined_image.png"
@@ -85,55 +101,127 @@ def process_images():
     _, combined_binary_img = cv2.threshold(
         canvas, 10, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU
     )
-    final_contours, _ = cv2.findContours(combined_binary_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    final_edges = cv2.Canny(combined_binary_img, 50, 150)
+
+    final_contours, _ = cv2.findContours(
+        final_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
 
     # Create SVG with final contours and offset rectangle
     svg_file_path = f"{IMAGE_FOLDER}/output.svg"
-    create_svg_with_contours(svg_file_path, final_contours, offset)
+    create_svg_with_contours(
+        svg_file_path, final_contours, offset, canvas_width, canvas_height
+    )
 
     return svg_file_path, combined_image_path
 
-def create_svg_with_contours(svg_file_path, contours, offset):
-    dwg = svgwrite.Drawing(svg_file_path, profile='tiny')
-    for contour in contours:
-        path_data = [
-            ("M", (point[0][0] + offset, point[0][1] + offset)) if i == 0 else ("L", (point[0][0] + offset, point[0][1] + offset))
-            for i, point in enumerate(contour)
+
+def create_svg_with_contours(svg_file_path, contours, offset, width, height):
+    dwg = svgwrite.Drawing(svg_file_path, profile="tiny", size=(width, height))
+    # Define rectangle size
+    rect_width = 1000  # Adjust as needed
+    rect_height = 500  # Adjust as needed
+    rect_x = 0  # Top left corner
+    rect_y = 0  # Top left corner
+
+    # Add rectangle to SVG
+    dwg.add(
+        dwg.rect(
+            insert=(rect_x, rect_y),
+            size=(rect_width, rect_height),
+            fill="white",
+            stroke="black",
+            stroke_width=2,
+        )
+    )
+    # Offset for contours based on rectangle size
+    offset_y = (
+        rect_height + 10
+    )  # Move contours down by the height of the rectangle plus a gap
+    # Save contours to SVG as paths
+
+    for idx, contour in enumerate(contours):
+        contour_with_offset = [
+            (point[0][0] + offset, point[0][1] + offset + offset_y) for point in contour
         ]
-        path = dwg.path(d=path_data, fill="none", stroke="black", stroke_width=0.5)
-        dwg.add(path)
-    
+        path_data = (
+            "M " + " L ".join([f"{x},{y}" for x, y in contour_with_offset]) + " Z"
+        )
+        dwg.add(dwg.path(d=path_data, fill="none", stroke="black", stroke_width=1))
+
     dwg.save()
 
 
 def convert_svg_to_dxf(svg_file_path, dxf_file_path):
     # Load SVG file and parse it
     svg_doc = minidom.parse(svg_file_path)
-    paths = svg_doc.getElementsByTagName(
-        "polygon"
-    )  # Only works if contours are saved as <polygon>
+    paths = svg_doc.getElementsByTagName("path")  # Look for <path> elements
 
     # Create a new DXF document
     dwg = ezdxf.new(dxfversion="R2010")
     msp = dwg.modelspace()
 
-    # Parse each polygon and add as polyline in DXF
+    # Parse each path and add as polyline in DXF
     for path in paths:
-        points_str = path.getAttribute("points")
+        d = path.getAttribute("d")
+        if not d:
+            print("No 'd' attribute found for path.")
+            continue
+
+        print(f"Processing path with d attribute: {d}")  # Debugging line
         points = []
 
-        # Parse the points in "x1,y1 x2,y2 ... xn,yn" format
-        for point_str in points_str.split():
-            x, y = map(float, point_str.split(","))
-            points.append((x, y))
+        # Regular expression to extract commands and coordinates
+        commands = re.findall(r"([MmLlZz])([^MmLlZz]*)", d)
 
-        # Add polyline to DXF
+        current_position = None
+
+        for command, coord_str in commands:
+            coords = coord_str.strip().split()
+            coords = [
+                coord.replace(",", ".") for coord in coords if coord
+            ]  # Replace commas with dots
+
+            # Convert coordinates to float
+            try:
+                coords = [float(coord) for coord in coords]
+            except ValueError as e:
+                print(f"Error converting coordinates: {coords}. Error: {e}")
+                continue  # Skip to the next command if there is an error
+
+            if command in ["M", "m"]:  # Move to
+                if len(coords) >= 2:
+                    current_position = (coords[0], coords[1])
+                    if command == "m":  # Relative move
+                        current_position = (
+                            current_position[0] + points[-2][0],
+                            current_position[1] + points[-2][1],
+                        )
+            elif command in ["L", "l"]:  # Line to
+                for i in range(0, len(coords), 2):
+                    if i + 1 < len(coords):
+                        point = (coords[i], coords[i + 1])
+                        if command == "l":  # Relative line
+                            point = (
+                                point[0] + current_position[0],
+                                point[1] + current_position[1],
+                            )
+                        points.append(point)
+                        current_position = point
+            elif command in ["Z", "z"]:  # Close path
+                if points and current_position:
+                    points.append(points[0])  # Close the loop
+
+        # Add polyline to DXF if points are found
         if points:
             msp.add_lwpolyline(points, is_closed=True)
+            print(f"Added polyline with points: {points}")  # Debugging line
+        else:
+            print("No points found for this path.")
 
     # Save the DXF document
     dwg.saveas(dxf_file_path)
-    svg_doc.unlink()
+    print(f"DXF saved at: {dxf_file_path}")
 
 
 @app.route("/")
