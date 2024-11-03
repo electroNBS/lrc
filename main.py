@@ -9,6 +9,7 @@ import svgwrite
 import ezdxf
 from xml.dom import minidom
 
+
 app = Flask(__name__)
 IMAGE_FOLDER = "./static/images"
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
@@ -363,10 +364,10 @@ def convert_to_dxf():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/index2')
+@app.route("/index2")
 def index2():
     # Render the SVGnest index page as a template
-    return render_template('svgnest_index.html')
+    return render_template("svgnest_index.html")
 
 
 if __name__ == "__main__":
